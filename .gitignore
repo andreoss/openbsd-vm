@@ -1,0 +1,7 @@
+bios/
+*.img
+*.pub
+*.fd
+*.mlog
+*.log
+*.pid

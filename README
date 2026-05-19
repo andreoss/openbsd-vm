@@ -1,0 +1,33 @@
+OpenBSD 7.9 VM automation
+
+Automates install and first-boot setup of OpenBSD 7.9 in QEMU/KVM on a
+Linux host, driven over serial (no VNC/OCR).
+
+How it works
+
+  vm.pl runs an install of OpenBSD 7.9 from the provided install media
+  onto a raw disk image, answers the installer over the serial console,
+  configures an encrypted softraid, boots the installed system through
+  the UEFI loader, and performs post-install setup over SSH.
+
+  Serial is on port 1234, the QEMU monitor on 1233.
+
+Commands
+
+  perl vm.pl all        full pipeline: install, boot, ssh setup, extras
+  perl vm.pl boot       boot the installed system and wait for ssh
+  perl vm.pl setup      post-install ssh/config setup
+  perl vm.pl mnt        mount the guest disk from the host
+  perl vm.pl halt       stop the VM
+
+Prerequisites (host)
+
+  - QEMU/KVM
+  - OVMF firmware (OVMF.fd)
+  - install image install79.img
+  - vmkey SSH keypair; public key is injected into authorized_keys
+
+Notes
+
+  - The loader occasionally stalls reading the softraid volume; vm.pl
+    retries with a monitor-issued reset.
