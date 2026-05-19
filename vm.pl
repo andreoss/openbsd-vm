@@ -29,6 +29,7 @@ our $GOP     = 15;
 our $SSH_PORT  = 22;
 our $SSH_HOST  = '';
 our $IPFILE    = "$WORK/guest.ip";
+our $FW_PORT   = 7922;
 our $MON_PORT  = 1233;
 our $SER_PORT  = 1234;
 our $MEM       = '4g';
@@ -166,12 +167,30 @@ sub shq {
     return "'$s'";
 }
 
+sub net_mode {
+    return 'bridge' if glob('/sys/class/net/virbr*');
+    return 'user';
+}
+
 sub prep {
     mlog "=== PREP ===";
     unless (-f $IMG_INSTALL) {
         my $url = 'https://cdn.openbsd.org/pub/OpenBSD/7.9/amd64/install79.img';
         mlog "downloading $url";
         run('curl', '-fLo', $IMG_INSTALL, $url) or die "download install: $?\n";
+    }
+    unless (-f $OVMF) {
+        for my $cand (glob('/nix/store/*-OVMF*/FV/OVMF.fd'), glob('/usr/share/OVMF/OVMF.fd'), glob('/usr/share/ovmf/OVMF.fd')) {
+            next unless -f $cand;
+            mlog "copying ovmf from $cand";
+            run('cp', '-f', $cand, $OVMF);
+            last;
+        }
+    }
+    unless (-f $OVMF) {
+        my $url = 'https://raw.githubusercontent.com/retrage/edk2-nightly/master/bin/RELEASEX64_OVMF.fd';
+        mlog "downloading $url";
+        run('curl', '-fLo', $OVMF, $url) or die "download ovmf: $?\n";
     }
     die "ovmf missing: $OVMF\n" unless -f $OVMF;
     my ($rc, $out) = run('test', '-f', $IMG_SYSTEM);
@@ -198,7 +217,11 @@ sub qemu_args {
     push @a, '-device', 'scsi-hd,drive=hd0';
     push @a, '-drive', "file=$IMG_SYSTEM,media=disk,format=raw,if=none,id=hd0";
     push @a, '-drive', "file=$IMG_INSTALL,media=disk,format=raw" if $install;
-    push @a, '-netdev', 'bridge,id=mn0,br=virbr0,helper=/run/wrappers/bin/qemu-bridge-helper';
+    if (net_mode() eq 'bridge') {
+        push @a, '-netdev', 'bridge,id=mn0,br=virbr0,helper=/run/wrappers/bin/qemu-bridge-helper';
+    } else {
+        push @a, '-netdev', "user,id=mn0,hostfwd=tcp:127.0.0.1:$FW_PORT-:22";
+    }
     push @a, '-device', 'virtio-net,netdev=mn0';
     push @a, '-chardev', "socket,id=ser0,server=on,wait=off,telnet=on,port=$SER_PORT,host=127.0.0.1,ipv4=on,ipv6=off";
     push @a, '-serial', 'chardev:ser0';
@@ -555,8 +578,18 @@ sub boot_once {
     return login_serial($s);
 }
 
+sub ssh_target {
+    if (net_mode() eq 'user') {
+        $SSH_HOST = '127.0.0.1';
+        $SSH_PORT = $FW_PORT;
+        return 1;
+    }
+    return 0;
+}
+
 sub discover_guest_ip {
     my ($s) = @_;
+    return ssh_target() if ssh_target();
     my $ip = '';
     for (1 .. 6) {
         txh($s, "ifconfig vio0 | grep inet\r");
@@ -629,6 +662,7 @@ sub adduser_serial {
 
 sub ssh_raw {
     my ($user, $remote) = @_;
+    ssh_target() unless $SSH_HOST && length $SSH_HOST;
     unless ($SSH_HOST && length $SSH_HOST) {
         if (-f $IPFILE) {
             open(my $fh, '<', $IPFILE);
